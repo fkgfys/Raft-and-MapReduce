@@ -1,14 +1,12 @@
 package mr
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
 	"sort"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -46,12 +44,12 @@ func (c *Coordinator) Register(args *Args, reply *Reply) error {
 			reply.Pin = c.nWorker
 			c.mworkers[reply.Pin] = -1
 			c.rworkers[reply.Pin] = -1
-			fmt.Println("Master: Worker " + strconv.Itoa(c.nWorker) + " Registered")
+			//fmt.Println("Master: Worker " + strconv.Itoa(c.nWorker) + " Registered")
 		//} else {
 			//reply.Pin = args.Pin
 		//}
 		c.nWorker += 1
-		fmt.Println("Number of Workers:" + strconv.Itoa(c.nWorker))
+		//fmt.Println("Number of Workers:" + strconv.Itoa(c.nWorker))
 		c.mu.Unlock()
 	}
 	
@@ -70,7 +68,7 @@ func (c *Coordinator) MapComplete(args *CompArgs, reply *CompReply) error {
 			c.buckets[ihash(kv.Key) % c.nReduce] = (append(c.buckets[ihash(kv.Key) % c.nReduce], kv))
 		}
 		c.nMap++
-		fmt.Println("------------MMM------------"+ strconv.Itoa(c.nMap))
+		//fmt.Println("------------MMM------------"+ strconv.Itoa(c.nMap))
 	}
 	c.mu.Unlock()
 	reply.MapD = c.DoneMap()
@@ -89,13 +87,13 @@ func (c *Coordinator) MapTask(args *TaskArgs, reply *TaskReply) error {
 		if len(c.files) > 0 {
 			
 			reply.File = c.files[0]
-			fmt.Println("Master: Sended file " + reply.File + " to Worker " + strconv.Itoa(args.Pin))
+			//fmt.Println("Master: Sended file " + reply.File + " to Worker " + strconv.Itoa(args.Pin))
 			c.files = c.files[1:]
 			c.inProgressTask[reply.File] = args.Pin
 			c.mworkers[args.Pin] = 0
 			
 		} else {
-			fmt.Println("Master: No file to send to Worker " + strconv.Itoa(args.Pin))
+			//fmt.Println("Master: No file to send to Worker " + strconv.Itoa(args.Pin))
 			reply.File = ""
 		}
 		c.mu.Unlock()
@@ -114,10 +112,10 @@ func (c *Coordinator) ReduceTask(args *TaskArgs, reply *ReduceReply) error {
 		reply.File = c.buckets[reply.TaskNum]
 		c.inProgressReduce[args.Pin] = reply.TaskNum
 		c.rworkers[args.Pin] = 0
-		fmt.Println("Master: Sending task " + strconv.Itoa(reply.TaskNum) + " to Worker " + strconv.Itoa(args.Pin))
+		//fmt.Println("Master: Sending task " + strconv.Itoa(reply.TaskNum) + " to Worker " + strconv.Itoa(args.Pin))
 	} else {
 		reply.TaskNum = -1
-		fmt.Println("Master: No reduce file to send to Worker " + strconv.Itoa(args.Pin))
+		//fmt.Println("Master: No reduce file to send to Worker " + strconv.Itoa(args.Pin))
 	}
 	
 	reply.ReduceD = c.Done()
@@ -134,8 +132,8 @@ func (c *Coordinator) ReduceComplete(args *ReduceArgs, reply *CompReply) error {
 		delete(c.inProgressReduce, args.Pin)
 		c.rworkers[args.Pin] = -1
 		c.Dcount++
-		fmt.Println("Reduce Task " + strconv.Itoa(args.TaskN) + " Completed!!!")
-		fmt.Println("------------RRR------------"+ strconv.Itoa(c.Dcount))
+		//fmt.Println("Reduce Task " + strconv.Itoa(args.TaskN) + " Completed!!!")
+		//fmt.Println("------------RRR------------"+ strconv.Itoa(c.Dcount))
 	}
 	
 	reply.MapD = c.Done()

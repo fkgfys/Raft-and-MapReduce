@@ -48,14 +48,14 @@ func Worker(mapf func(string, string) []KeyValue,
 	// Your worker implementation here.
 	// MAP PHASE
 	wid := CallRegister()
-	fmt.Println("Worker " + strconv.Itoa(wid) + ": Registered")
+	//fmt.Println("Worker " + strconv.Itoa(wid) + ": Registered")
 	taskf, md := CallTask(wid)
 	
 	for !md {	// GOT A FILE
 		filename := taskf
 
 		if filename != "" {
-			fmt.Println("Got Task " + filename)
+			//fmt.Println("Got Task " + filename)
 			intermediate := []KeyValue{}
 			file, err := os.Open(filename)
 			if err != nil {
@@ -82,7 +82,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	for !d {
 		if num != -1 {
 			oname := "mr-out-" + strconv.Itoa(num)
-			fmt.Println("Worker " + strconv.Itoa(wid) + ": Reducing Task " + strconv.Itoa(num))
+			//fmt.Println("Worker " + strconv.Itoa(wid) + ": Reducing Task " + strconv.Itoa(num))
 			ofile, _ := os.Create(oname)
 			i := 0
 			for i < len(reducet) {
