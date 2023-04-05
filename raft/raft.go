@@ -209,13 +209,17 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
 
-	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
+	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.upToDate(args.LastLogTerm, args.LastLogIndex) {
 		rf.votedFor = args.CandidateId
 		reply.VoteGranted = true
 		rf.votedCh <- true
 	}
 
 	return
+}
+
+func (rf *Raft) upToDate(cTerm int, cIndex int) bool {
+	return cTerm > rf.log[len(rf.log) - 1].Term || (cTerm == rf.log[len(rf.log) - 1].Term && cIndex >= len(rf.log) - 1)
 }
 
 
@@ -268,16 +272,18 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 		if reply.VoteGranted {
 			rf.numVotes++
 			if rf.numVotes > len(rf.peers) / 2 {
-				rf.electionCh <- true
 				rf.state = LEADER
 				rf.nextIndex = make([]int, len(rf.peers))
+				rf.matchIndex = make([]int, len(rf.peers))
 				for i := range rf.nextIndex {
 					rf.nextIndex[i] = len(rf.log)
+					rf.matchIndex[i] = 0
 				}
-				rf.matchIndex = make([]int, len(rf.peers))
-
+				//DPrintf("Server %d becomes a leader!!!", rf.me)
+				rf.electionCh <- true
 			}
 		}
+		
 
 	}
 
@@ -307,6 +313,21 @@ func (rf *Raft) startVoting() {
 	}
 }
 
+func (rf *Raft) apply() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	for rf.lastApplied < rf.commitIndex {
+		rf.lastApplied++
+		log := ApplyMsg{
+			CommandValid: true,
+			Command:      rf.log[rf.lastApplied].Command,
+			CommandIndex: rf.lastApplied,
+		}
+		rf.applyCh <- log
+	}
+}
+
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -326,36 +347,38 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	rf.heartbeatCh <- true
 
-	/*2B code, comment out for 2A to pass the tests*/
+	reply.Term = rf.currentTerm
 
-	// reply.Term = rf.currentTerm
+	if args.PrevLogIndex > len(rf.log) - 1 || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm{
+		return
+	}
 
-	// if args.PrevLogIndex > len(rf.log) - 1 || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm{
-	// 	return
-	// }
+	for ety := range args.Entries {
+		i := args.PrevLogIndex + ety + 1
+		if i >= len(rf.log) || (i < len(rf.log) && rf.log[i].Term != args.Entries[ety].Term) {
+			if i < len(rf.log) {
+				rf.log = rf.log[:i]
+			}
+			break
+		}
+	}
 
-	// for ety := range args.Entries {
-	// 	i := args.PrevLogIndex + ety + 1
-	// 	if i >= len(rf.log) || (i < len(rf.log) && rf.log[i].Term != args.Entries[ety].Term) {
-	// 		if i < len(rf.log) {
-	// 			rf.log = rf.log[:i]
-	// 		}
-	// 		break
-	// 	}
-	// }
+	for ety := range args.Entries {
+		i := args.PrevLogIndex + ety + 1
+		if i >= len(rf.log) {
+			rf.log = append(rf.log, args.Entries[ety])
+		} else {
+			rf.log[i] = args.Entries[ety]
+		}
+	}
 
-	// for ety := range args.Entries {
-	// 	i := args.PrevLogIndex + ety + 1
-	// 	if i >= len(rf.log) {
-	// 		rf.log = append(rf.log, args.Entries[ety])
-	// 	} else {
-	// 		rf.log[i] = args.Entries[ety]
-	// 	}
-	// }
+	reply.Success = true
+	//DPrintf("Server %d agrees!!!", rf.me)
 
-	// if args.LeaderCommit > rf.commitIndex {
-	// 	rf.commitIndex = min(args.LeaderCommit, args.PrevLogIndex + len(rf.log))
-	// }
+	if args.LeaderCommit > rf.commitIndex {
+		rf.commitIndex = min(args.LeaderCommit, len(rf.log) - 1)
+		go rf.apply()
+	}
 	return
 } 
 
@@ -387,22 +410,36 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 		return ok
 	}
 
-	/*2B code, comment out for 2A to pass the tests*/
+	if reply.Success {
+		if len(args.Entries) > 0 {
+			rf.nextIndex[server] = max(rf.nextIndex[server], args.PrevLogIndex + len(args.Entries) + 1)
+			rf.matchIndex[server] = rf.nextIndex[server] - 1
+		}
+	} else {
+		plt := args.PrevLogTerm
+		for rf.log[args.PrevLogIndex].Term == plt {
+			args.PrevLogIndex--
+		}
+		args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
+		rf.nextIndex[server] = args.PrevLogIndex + 1
 
-	// if reply.Success {
-	// 	if len(args.Entries) > 0 {
-	// 		rf.nextIndex[server] = max(rf.nextIndex[server], args.PrevLogIndex + len(args.Entries) + 1)
-	// 		rf.matchIndex[server] = rf.nextIndex[server] - 1
-	// 	}
-	// } else {
-	// 	plt := args.PrevLogTerm
-	// 	for rf.log[args.PrevLogIndex].Term == plt {
-	// 		args.PrevLogIndex--
-	// 	}
-	// 	args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
-	// 	rf.nextIndex[server] = args.PrevLogIndex + 1
-	// 	return ok
-	// }
+		return ok
+	}
+
+	for N := len(rf.log) - 1; N > rf.commitIndex; N-- {
+		count := 1
+		for i := range rf.peers {
+			if i != rf.me && rf.matchIndex[i] >= N && rf.log[N].Term == rf.currentTerm {
+				count++
+			}
+		}
+		if count > len(rf.peers) / 2 {
+			//DPrintf("Server %d succeeds to commit log %d: %d!!!", rf.me, N, rf.log[N].Command)
+			rf.commitIndex = N
+			go rf.apply()
+			break
+		}
+	}
 
 	return ok
 }
@@ -420,7 +457,7 @@ func (rf *Raft) sendHeartBeat() {
 	defer rf.mu.Unlock()
 
 	for i := range rf.peers {
-		if i != rf.me {
+		if i != rf.me && rf.state == LEADER {
 
 			args := &AppendEntriesArgs{
 				Term:         rf.currentTerm,
@@ -428,10 +465,11 @@ func (rf *Raft) sendHeartBeat() {
 				PrevLogIndex: rf.nextIndex[i] - 1,
 				PrevLogTerm:  rf.log[rf.nextIndex[i] - 1].Term,
 				LeaderCommit: rf.commitIndex,
+				Entries: nil,
 			}
 
 			if len(rf.log) - 1 >= rf.nextIndex[i] {
-				copy(args.Entries, rf.log[rf.nextIndex[i]:])
+				args.Entries = rf.log[rf.nextIndex[i]:]
 			}
 
 			reply := &AppendEntriesReply{}
@@ -460,6 +498,15 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (2B).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	isLeader = (rf.state == LEADER)
+
+	if isLeader {
+		index = len(rf.log)
+		term = rf.currentTerm
+		rf.log = append(rf.log, LogEntry{Term: rf.currentTerm, Command: command})
+	}
 
 	return index, term, isLeader
 }
@@ -517,11 +564,12 @@ func (rf *Raft) ticker() {
 					rf.state = FOLLOWER
 					rf.mu.Unlock()
 				case <- rf.electionCh:
+					time.Sleep(time.Millisecond * 300)
 				case <- time.After(time.Millisecond * time.Duration(rand.Intn(500) + 500)):
 				}
 			case LEADER:
 				go rf.sendHeartBeat()
-				time.Sleep(time.Millisecond * 200)
+				time.Sleep(time.Millisecond * 60)
 			
 		}
 	}
@@ -549,9 +597,24 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.currentTerm = 0
 	rf.log = make([]LogEntry, 1)
 	rf.log[0].Term = 0
+	
 	rf.state = FOLLOWER
+	rf.nextIndex = make([]int, len(peers))
+	rf.matchIndex = make([]int, len(peers))
+	for i := range rf.peers {
+		rf.nextIndex[i] = len(rf.log)
+		rf.matchIndex[i] = 0
+	}
+	rf.commitIndex = 0
+	rf.lastApplied = 0
 	
 	rf.applyCh = applyCh
+	log := ApplyMsg{
+		CommandValid: true,
+		CommandIndex: 0,
+		Command: 0,
+	}
+	rf.applyCh <- log
 	rf.votedCh = make(chan bool, 100)
 	rf.electionCh = make(chan bool, 100)
 	rf.heartbeatCh = make(chan bool, 100)
