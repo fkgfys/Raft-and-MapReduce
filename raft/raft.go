@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"bytes"
+	"cs350/labgob"
 	"cs350/labrpc"
 )
 
@@ -109,12 +111,14 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) persist() {
 	// Your code here (2C).
 	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.log)
+	//DPrintf("Log persisted: %d", rf.log)
+	e.Encode(rf.votedFor)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 // restore previously persisted state.
@@ -124,17 +128,20 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	// Your code here (2C).
 	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var log []LogEntry
+	var votedFor int
+	var currentTerm int
+	if d.Decode(&currentTerm) != nil ||
+	   d.Decode(&log) != nil ||
+	   d.Decode(&votedFor) != nil {
+	  return
+	} else {
+	  rf.log = log
+	  rf.votedFor = votedFor
+	  rf.currentTerm = currentTerm
+	}
 }
 
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
@@ -204,6 +211,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.currentTerm = args.Term
 		rf.state = FOLLOWER
 		rf.votedFor = -1
+		rf.persist()
 	}
 
 	reply.Term = rf.currentTerm
@@ -212,6 +220,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.upToDate(args.LastLogTerm, args.LastLogIndex) {
 		rf.votedFor = args.CandidateId
 		reply.VoteGranted = true
+		rf.persist()
 		rf.votedCh <- true
 	}
 
@@ -266,6 +275,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 			rf.state = FOLLOWER
 			rf.currentTerm = reply.Term
 			rf.votedFor = -1
+			rf.persist()
 			return ok
 		}
 
@@ -324,6 +334,7 @@ func (rf *Raft) apply() {
 			Command:      rf.log[rf.lastApplied].Command,
 			CommandIndex: rf.lastApplied,
 		}
+		//DPrintf("Server %d's current log: %d",rf.me, rf.log)
 		rf.applyCh <- log
 	}
 }
@@ -334,50 +345,56 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	
 	reply.Success = false
 
+	if args.Term > rf.currentTerm {
+		rf.state = FOLLOWER
+		rf.votedFor = -1
+		rf.currentTerm = args.Term
+		rf.persist()
+	}
+	
+
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		return
 	}
 
-	if args.Term > rf.currentTerm {
-		rf.state = FOLLOWER
-		rf.votedFor = -1
-		rf.currentTerm = args.Term
-	}
+	if rf.state == FOLLOWER || rf.state == CANDIDATE {
+		reply.Term = rf.currentTerm
 
-	rf.heartbeatCh <- true
+		rf.heartbeatCh <- true
 
-	reply.Term = rf.currentTerm
+		if args.PrevLogIndex > len(rf.log) - 1 || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm{
+			return
+		}
 
-	if args.PrevLogIndex > len(rf.log) - 1 || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm{
-		return
-	}
-
-	for ety := range args.Entries {
-		i := args.PrevLogIndex + ety + 1
-		if i >= len(rf.log) || (i < len(rf.log) && rf.log[i].Term != args.Entries[ety].Term) {
-			if i < len(rf.log) {
-				rf.log = rf.log[:i]
+		for ety := range args.Entries {
+			i := args.PrevLogIndex + ety + 1
+			if i >= len(rf.log) || (i < len(rf.log) && rf.log[i].Term != args.Entries[ety].Term) {
+				if i < len(rf.log) {
+					rf.log = rf.log[:i]
+					rf.persist()
+				}
+				break
 			}
-			break
 		}
-	}
 
-	for ety := range args.Entries {
-		i := args.PrevLogIndex + ety + 1
-		if i >= len(rf.log) {
-			rf.log = append(rf.log, args.Entries[ety])
-		} else {
-			rf.log[i] = args.Entries[ety]
+		for ety := range args.Entries {
+			i := args.PrevLogIndex + ety + 1
+			if i >= len(rf.log) {
+				rf.log = append(rf.log, args.Entries[ety])
+			} else {
+				rf.log[i] = args.Entries[ety]
+			}
 		}
-	}
+		rf.persist()
 
-	reply.Success = true
-	//DPrintf("Server %d agrees!!!", rf.me)
+		reply.Success = true
+		//DPrintf("Server %d agrees!!!", rf.me)
 
-	if args.LeaderCommit > rf.commitIndex {
-		rf.commitIndex = min(args.LeaderCommit, len(rf.log) - 1)
-		go rf.apply()
+		if args.LeaderCommit > rf.commitIndex {
+			rf.commitIndex = min(args.LeaderCommit, args.PrevLogIndex + len(args.Entries))
+			go rf.apply()
+		}
 	}
 	return
 } 
@@ -407,6 +424,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 		rf.currentTerm = reply.Term
 		rf.state = FOLLOWER
 		rf.votedFor = -1
+		rf.persist()
 		return ok
 	}
 
@@ -420,15 +438,17 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 		for rf.log[args.PrevLogIndex].Term == plt {
 			args.PrevLogIndex--
 		}
-		args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
 		rf.nextIndex[server] = args.PrevLogIndex + 1
 
-		return ok
 	}
 
 	for N := len(rf.log) - 1; N > rf.commitIndex; N-- {
 		count := 1
 		for i := range rf.peers {
+			if (rf.log[N].Term != rf.currentTerm) {
+				break
+			}
+
 			if i != rf.me && rf.matchIndex[i] >= N && rf.log[N].Term == rf.currentTerm {
 				count++
 			}
@@ -506,6 +526,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		index = len(rf.log)
 		term = rf.currentTerm
 		rf.log = append(rf.log, LogEntry{Term: rf.currentTerm, Command: command})
+		//DPrintf("Server %d's current log: %d",rf.me, rf.log)
+		rf.persist()
 	}
 
 	return index, term, isLeader
@@ -550,12 +572,14 @@ func (rf *Raft) ticker() {
 					rf.mu.Lock()
 					rf.state = CANDIDATE
 					rf.mu.Unlock()
+					
 				}
 			case CANDIDATE: 
 				rf.mu.Lock()
 				rf.currentTerm++
 				rf.votedFor = rf.me
 				rf.numVotes = 1
+				rf.persist()
 				rf.mu.Unlock()
 				go rf.startVoting()
 				select {
@@ -621,6 +645,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+	rf.persist()
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
