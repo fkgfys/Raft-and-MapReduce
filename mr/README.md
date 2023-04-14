@@ -14,7 +14,7 @@ Please do not publish your code or make it available to current or future CS 350
 
 ## Software
 
-You'll implement this lab (and all the labs) in Go. The Go web site contains lots of tutorial information. We will grade your labs using Go version 1.13; you should use 1.13 too. You can check your Go version by running `go version`. Please follow lab 1 slides for Go setup (posted on Piazza).
+You'll implement this lab (and all the labs) in Go. The Go web site contains lots of tutorial information. We will grade your labs using Go version 1.13; you should use Go version 1.13 or higher. You can check your Go version by running `go version`. Please follow lab 1 slides for Go setup (posted on Piazza).
 
 We recommend that you work on the labs on your own machine, so you can use the tools, text editors, etc. that you are already familiar with. Alternatively, you can work on the csa machines.
 
@@ -87,14 +87,14 @@ If you run the test script now, it will hang because the coordinator never finis
 
 ```
 $ cd main
-$ sh test-mr.sh
+$ bash test-mr.sh
 *** Starting wc test.
 ```
 
 You can change `ret := false` to true in the `Done` function in `mr/coordinator.go` so that the coordinator exits immediately. Then:
 
 ```
-$ sh ./test-mr.sh
+$ bash ./test-mr.sh
 *** Starting wc test.
 sort: No such file or directory
 cmp: EOF on mr-wc-all
@@ -107,7 +107,7 @@ The test script expects to see output in files named `mr-out-X`, one for each re
 When you've finished, the test script output should look like this:
 
 ```
-$ sh ./test-mr.sh
+$ bash ./test-mr.sh
 *** Starting wc test.
 --- wc test: PASS
 *** Starting indexer test.
@@ -171,6 +171,7 @@ and to read such a file back:
 * To test crash recovery, you can use the `mrapps/crash.go` application plugin. It randomly exits in the Map and Reduce functions.
 * To ensure that nobody observes partially written files in the presence of crashes, the MapReduce paper mentions the trick of using a temporary file and atomically renaming it once it is completely written. You can use `ioutil.TempFile` to create a temporary file and `os.Rename` to atomically rename it.
 * `test-mr.sh` runs all the processes in the sub-directory `mr-tmp`, so if something goes wrong and you want to look at intermediate or output files, look there.
+* If you are a Windows user and use WSL, you might have to do `dos2unix test-mr.sh` before running the test script (do this in case you get weird errors when run `bash test-mr.sh`).
 
 ## Handin procedure
 
