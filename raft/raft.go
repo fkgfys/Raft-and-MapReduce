@@ -211,6 +211,7 @@ type InstallSnapshotReply struct {
 }
 
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+
 	// DPrintf("%d by InstallSnapshot", 9999)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -298,6 +299,11 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
 
 	// Your code here (2D).
+
+	if rf == nil {
+		return false
+	}
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if lastIncludedIndex <= rf.commitIndex {
@@ -330,6 +336,11 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 // service no longer needs the log through (and including)
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
+
+	if rf == nil {
+		return
+	}
+
 	if rf.killed() {
 		return
 	}
